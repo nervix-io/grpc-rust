@@ -36,6 +36,7 @@ use tokio_rustls::rustls::pki_types::TrustAnchor;
 /// Configures TLS settings for endpoints.
 #[derive(Debug, Clone, Default)]
 pub struct ClientTlsConfig {
+    provider: Option<Arc<tokio_rustls::rustls::crypto::CryptoProvider>>,
     domain: Option<String>,
     certs: Vec<Certificate>,
     trust_anchors: Vec<TrustAnchor<'static>>,
@@ -53,6 +54,17 @@ impl ClientTlsConfig {
     /// Creates a new `ClientTlsConfig` using Rustls.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Choose an explicit cryptographic provider independently of the process default.
+    /// Certificate, identity, domain-name, ALPN and timeout configuration remain unchanged.
+    /// An invalid provider is refused when the endpoint builds its TLS connector.
+    pub fn crypto_provider(
+        mut self,
+        provider: Arc<tokio_rustls::rustls::crypto::CryptoProvider>,
+    ) -> Self {
+        self.provider = Some(provider);
+        self
     }
 
     /// Sets the domain name against which to verify the server's TLS certificate.
@@ -188,6 +200,7 @@ impl ClientTlsConfig {
             }
         };
         TlsConnector::new(
+            self.provider,
             self.certs,
             self.trust_anchors,
             self.identity,
@@ -292,5 +305,21 @@ mod tests {
         config
             .into_tls_connector_with_verifier(&uri, Arc::new(DummyVerifier))
             .unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "tls-aws-lc"))]
+mod preconfigured_tests {
+    use super::*;
+
+    #[test]
+    fn preconfigured_tls_client_refuses_an_invalid_provider_without_panicking() {
+        let mut provider = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider();
+        provider.cipher_suites.clear();
+        let tls = ClientTlsConfig::new().crypto_provider(Arc::new(provider));
+        assert!(
+            tls.into_tls_connector(&"https://localhost".parse().unwrap())
+                .is_err()
+        );
     }
 }
