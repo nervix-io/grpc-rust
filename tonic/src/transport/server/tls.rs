@@ -31,6 +31,7 @@ use crate::transport::tls::{Certificate, Identity};
 #[derive(Clone, Default)]
 pub struct ServerTlsConfig {
     identity: Option<Identity>,
+    rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     client_ca_root: Option<Certificate>,
     client_auth_optional: bool,
     ignore_client_order: bool,
@@ -48,6 +49,19 @@ impl ServerTlsConfig {
     /// Creates a new `ServerTlsConfig`.
     pub fn new() -> Self {
         ServerTlsConfig::default()
+    }
+
+    /// Supply the complete TLS configuration, including certificates, trust and ALPN.
+    ///
+    /// This configuration takes precedence over identity, client CA, cipher-order and key-log
+    /// builder fields. The handshake timeout still applies. Existing accept scheduling,
+    /// error handling and TLS connection information are unchanged.
+    pub fn rustls_server_config(
+        mut self,
+        config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
+    ) -> Self {
+        self.rustls_config = Some(config);
+        self
     }
 
     /// Sets the [`Identity`] of the server.
@@ -107,6 +121,9 @@ impl ServerTlsConfig {
     }
 
     pub(crate) fn tls_acceptor(&self) -> Result<TlsAcceptor, crate::BoxError> {
+        if let Some(config) = &self.rustls_config {
+            return Ok(TlsAcceptor::from_rustls(config.clone(), self.timeout));
+        }
         TlsAcceptor::new(
             self.identity.as_ref().unwrap(),
             self.client_ca_root.as_ref(),
@@ -115,5 +132,26 @@ impl ServerTlsConfig {
             self.use_key_log,
             self.timeout,
         )
+    }
+}
+
+#[cfg(all(test, feature = "tls-aws-lc"))]
+mod preconfigured_tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio_rustls::rustls::{ServerConfig, server::ResolvesServerCertUsingSni};
+
+    #[test]
+    fn preconfigured_tls_server_keeps_the_configuration_without_pem_identity() {
+        let provider = Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider());
+        let mut config = ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(ResolvesServerCertUsingSni::new()));
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let tls = ServerTlsConfig::new().rustls_server_config(Arc::new(config));
+        assert!(tls.tls_acceptor().is_ok());
+        assert!(tls.clone().tls_acceptor().is_ok());
     }
 }

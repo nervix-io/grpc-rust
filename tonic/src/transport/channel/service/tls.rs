@@ -55,6 +55,7 @@ pub(crate) struct TlsConnector {
 impl TlsConnector {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        provider: Option<Arc<crypto::CryptoProvider>>,
         ca_certs: Vec<Certificate>,
         trust_anchors: Vec<TrustAnchor<'static>>,
         identity: Option<Identity>,
@@ -75,14 +76,18 @@ impl TlsConnector {
         }
 
         #[allow(unreachable_patterns)]
-        let builder = match crypto::CryptoProvider::get_default() {
-            Some(provider) => with_provider(provider.clone()),
-            #[cfg(feature = "tls-ring")]
-            None => with_provider(Arc::new(crypto::ring::default_provider())),
-            #[cfg(feature = "tls-aws-lc")]
-            None => with_provider(Arc::new(crypto::aws_lc_rs::default_provider())),
-            // somehow tls is enabled, but neither of the crypto features are enabled.
-            _ => ClientConfig::builder(),
+        let builder = if let Some(provider) = provider {
+            ClientConfig::builder_with_provider(provider).with_safe_default_protocol_versions()?
+        } else {
+            match crypto::CryptoProvider::get_default() {
+                Some(provider) => with_provider(provider.clone()),
+                #[cfg(feature = "tls-ring")]
+                None => with_provider(Arc::new(crypto::ring::default_provider())),
+                #[cfg(feature = "tls-aws-lc")]
+                None => with_provider(Arc::new(crypto::aws_lc_rs::default_provider())),
+                // somehow tls is enabled, but neither of the crypto features are enabled.
+                _ => ClientConfig::builder(),
+            }
         };
 
         let builder = match server_cert_verifier {
@@ -180,5 +185,35 @@ impl TlsConnector {
 impl fmt::Debug for TlsConnector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TlsConnector").finish()
+    }
+}
+
+#[cfg(all(test, feature = "tls-aws-lc"))]
+mod preconfigured_tests {
+    use super::*;
+    use crate::transport::ClientTlsConfig;
+
+    #[test]
+    fn preconfigured_tls_client_keeps_the_explicit_provider_domain_alpn_and_timeout() {
+        let mut provider = crypto::aws_lc_rs::default_provider();
+        provider.cipher_suites = vec![crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256];
+        let provider = Arc::new(provider);
+        let timeout = Duration::from_secs(2);
+        let config = ClientTlsConfig::new()
+            .crypto_provider(provider.clone())
+            .domain_name("selected.test")
+            .assume_http2(true)
+            .timeout(timeout);
+        let connector = config
+            .into_tls_connector(&"https://uri.test".parse().unwrap())
+            .unwrap();
+        assert!(Arc::ptr_eq(connector.config.crypto_provider(), &provider));
+        assert_eq!(connector.config.alpn_protocols, vec![ALPN_H2.to_vec()]);
+        assert_eq!(
+            connector.domain.as_ref(),
+            &ServerName::try_from("selected.test").unwrap()
+        );
+        assert_eq!(connector.timeout, Some(timeout));
+        assert!(connector.assume_http2);
     }
 }
