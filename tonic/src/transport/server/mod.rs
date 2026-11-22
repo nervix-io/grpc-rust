@@ -99,6 +99,8 @@ pub struct Server<L = Identity> {
     http2_keepalive_timeout: Duration,
     http2_adaptive_window: Option<bool>,
     http2_max_pending_accept_reset_streams: Option<usize>,
+    http2_max_local_error_reset_streams: Option<usize>,
+    http2_max_send_buf_size: Option<usize>,
     http2_max_header_list_size: Option<u32>,
     max_frame_size: Option<u32>,
     accept_http1: bool,
@@ -123,6 +125,8 @@ impl Default for Server<Identity> {
             http2_keepalive_timeout: DEFAULT_HTTP2_KEEPALIVE_TIMEOUT,
             http2_adaptive_window: None,
             http2_max_pending_accept_reset_streams: None,
+            http2_max_local_error_reset_streams: None,
+            http2_max_send_buf_size: None,
             http2_max_header_list_size: None,
             max_frame_size: None,
             accept_http1: false,
@@ -310,6 +314,37 @@ impl<L> Server<L> {
     pub fn http2_max_pending_accept_reset_streams(self, max: Option<usize>) -> Self {
         Server {
             http2_max_pending_accept_reset_streams: max,
+            ..self
+        }
+    }
+
+    /// Configures the maximum number of local reset streams allowed before a GOAWAY will be sent.
+    ///
+    /// Passing `None` keeps the default in hyper. As of v1.4.1, it is 1024.
+    ///
+    /// See <https://rustsec.org/advisories/RUSTSEC-2024-0003.html> for more information.
+    #[must_use]
+    pub fn http2_max_local_error_reset_streams(self, max: Option<usize>) -> Self {
+        Server {
+            http2_max_local_error_reset_streams: max,
+            ..self
+        }
+    }
+
+    /// Sets the maximum write buffer size for each HTTP/2 stream.
+    ///
+    /// Once a stream has buffered this many bytes, it polls no more send capacity until they are
+    /// written to the connection.
+    ///
+    /// Passing `None` keeps the default in hyper. As of v1.4.1, it is about 400 KiB.
+    ///
+    /// # Panics
+    ///
+    /// Serving panics when the value is larger than `u32::MAX`, as hyper does.
+    #[must_use]
+    pub fn http2_max_send_buf_size(self, max: impl Into<Option<usize>>) -> Self {
+        Server {
+            http2_max_send_buf_size: max.into(),
             ..self
         }
     }
@@ -526,6 +561,8 @@ impl<L> Server<L> {
             http2_keepalive_timeout: self.http2_keepalive_timeout,
             http2_adaptive_window: self.http2_adaptive_window,
             http2_max_pending_accept_reset_streams: self.http2_max_pending_accept_reset_streams,
+            http2_max_local_error_reset_streams: self.http2_max_local_error_reset_streams,
+            http2_max_send_buf_size: self.http2_max_send_buf_size,
             http2_max_header_list_size: self.http2_max_header_list_size,
             max_frame_size: self.max_frame_size,
             accept_http1: self.accept_http1,
@@ -655,6 +692,8 @@ impl<L> Server<L> {
         let http2_keepalive_timeout = self.http2_keepalive_timeout;
         let http2_adaptive_window = self.http2_adaptive_window;
         let http2_max_pending_accept_reset_streams = self.http2_max_pending_accept_reset_streams;
+        let http2_max_local_error_reset_streams = self.http2_max_local_error_reset_streams;
+        let http2_max_send_buf_size = self.http2_max_send_buf_size;
         let max_connection_age = self.max_connection_age;
 
         let svc = self.service_builder.service(svc);
@@ -693,6 +732,14 @@ impl<L> Server<L> {
 
             if let Some(max_header_list_size) = max_header_list_size {
                 builder.http2().max_header_list_size(max_header_list_size);
+            }
+
+            if let Some(max) = http2_max_local_error_reset_streams {
+                builder.http2().max_local_error_reset_streams(max);
+            }
+
+            if let Some(max) = http2_max_send_buf_size {
+                builder.http2().max_send_buf_size(max);
             }
 
             builder
