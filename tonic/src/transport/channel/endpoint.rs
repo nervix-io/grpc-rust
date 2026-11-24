@@ -44,6 +44,15 @@ pub struct Endpoint {
     pub(crate) http2_keep_alive_timeout: Option<Duration>,
     pub(crate) http2_keep_alive_while_idle: Option<bool>,
     pub(crate) http2_max_header_list_size: Option<u32>,
+    pub(crate) http2_header_table_size: Option<u32>,
+    pub(crate) max_frame_size: Option<u32>,
+    pub(crate) http2_initial_max_send_streams: Option<usize>,
+    pub(crate) http2_max_concurrent_streams: Option<u32>,
+    pub(crate) http2_max_send_buf_size: Option<usize>,
+    pub(crate) http2_max_concurrent_reset_streams: Option<usize>,
+    pub(crate) http2_reset_stream_duration: Option<Duration>,
+    pub(crate) http2_max_local_error_reset_streams: Option<Option<usize>>,
+    pub(crate) http2_max_pending_accept_reset_streams: Option<usize>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) http2_adaptive_window: Option<bool>,
     pub(crate) local_address: Option<IpAddr>,
@@ -89,6 +98,15 @@ impl Endpoint {
             http2_keep_alive_timeout: None,
             http2_keep_alive_while_idle: None,
             http2_max_header_list_size: None,
+            http2_header_table_size: None,
+            max_frame_size: None,
+            http2_initial_max_send_streams: None,
+            http2_max_concurrent_streams: None,
+            http2_max_send_buf_size: None,
+            http2_max_concurrent_reset_streams: None,
+            http2_reset_stream_duration: None,
+            http2_max_local_error_reset_streams: None,
+            http2_max_pending_accept_reset_streams: None,
             connect_timeout: None,
             http2_adaptive_window: None,
             executor: SharedExec::tokio(),
@@ -116,6 +134,15 @@ impl Endpoint {
             http2_keep_alive_timeout: None,
             http2_keep_alive_while_idle: None,
             http2_max_header_list_size: None,
+            http2_header_table_size: None,
+            max_frame_size: None,
+            http2_initial_max_send_streams: None,
+            http2_max_concurrent_streams: None,
+            http2_max_send_buf_size: None,
+            http2_max_concurrent_reset_streams: None,
+            http2_reset_stream_duration: None,
+            http2_max_local_error_reset_streams: None,
+            http2_max_pending_accept_reset_streams: None,
             connect_timeout: None,
             http2_adaptive_window: None,
             executor: SharedExec::tokio(),
@@ -390,6 +417,125 @@ impl Endpoint {
     pub fn http2_max_header_list_size(self, size: u32) -> Self {
         Endpoint {
             http2_max_header_list_size: Some(size),
+            ..self
+        }
+    }
+
+    /// Sets the `SETTINGS_HEADER_TABLE_SIZE` option for HTTP2 connections.
+    ///
+    /// Informs the peer of the maximum size of the header compression
+    /// table used to decode header blocks, in octets.
+    ///
+    /// When unset, no value is advertised and the protocol's initial 4,096 octets apply.
+    #[must_use]
+    pub fn http2_header_table_size(self, size: u32) -> Self {
+        Endpoint {
+            http2_header_table_size: Some(size),
+            ..self
+        }
+    }
+
+    /// Sets the maximum frame size to use for HTTP2.
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// If not set, will default from underlying transport.
+    #[must_use]
+    pub fn max_frame_size(self, frame_size: impl Into<Option<u32>>) -> Self {
+        Endpoint {
+            max_frame_size: frame_size.into(),
+            ..self
+        }
+    }
+
+    /// Sets how many streams the client may open before the peer's first SETTINGS frame tells
+    /// it how many the peer allows.
+    ///
+    /// Passing `None` keeps the default in hyper. As of v1.4.1, it is 100.
+    #[must_use]
+    pub fn http2_initial_max_send_streams(self, max: impl Into<Option<usize>>) -> Self {
+        Endpoint {
+            http2_initial_max_send_streams: max.into(),
+            ..self
+        }
+    }
+
+    /// Sets the `SETTINGS_MAX_CONCURRENT_STREAMS` option the client advertises: how many
+    /// streams the peer may open towards it.
+    ///
+    /// Passing `None` advertises no limit, which is also the default.
+    #[must_use]
+    pub fn http2_max_concurrent_streams(self, max: impl Into<Option<u32>>) -> Self {
+        Endpoint {
+            http2_max_concurrent_streams: max.into(),
+            ..self
+        }
+    }
+
+    /// Sets the maximum write buffer size for each HTTP2 stream.
+    ///
+    /// Once a stream has buffered this many bytes, it polls no more send capacity until they are
+    /// written to the connection.
+    ///
+    /// Passing `None` keeps the default in hyper. As of v1.4.1, it is 1 MiB.
+    ///
+    /// # Panics
+    ///
+    /// Connecting panics when the value is larger than `u32::MAX`, as hyper does.
+    #[must_use]
+    pub fn http2_max_send_buf_size(self, max: impl Into<Option<usize>>) -> Self {
+        Endpoint {
+            http2_max_send_buf_size: max.into(),
+            ..self
+        }
+    }
+
+    /// Sets the maximum number of locally reset streams that HTTP2 remembers.
+    ///
+    /// HTTP2 ignores frames for a remembered reset stream. A frame for a forgotten one
+    /// counts toward [`Endpoint::http2_max_local_error_reset_streams`].
+    ///
+    /// Uses `hyper`'s default otherwise.
+    #[must_use]
+    pub fn http2_max_concurrent_reset_streams(self, max: usize) -> Self {
+        Endpoint {
+            http2_max_concurrent_reset_streams: Some(max),
+            ..self
+        }
+    }
+
+    /// Sets how long HTTP2 remembers a locally reset stream.
+    ///
+    /// See [`Endpoint::http2_max_concurrent_reset_streams`]. Uses `hyper`'s default otherwise.
+    #[must_use]
+    pub fn http2_reset_stream_duration(self, duration: Duration) -> Self {
+        Endpoint {
+            http2_reset_stream_duration: Some(duration),
+            ..self
+        }
+    }
+
+    /// Sets the maximum number of local error resets before HTTP2 closes the
+    /// connection with `GOAWAY(ENHANCE_YOUR_CALM)`.
+    ///
+    /// Pass `None` to disable the limit. The limit guards against a misbehaving
+    /// peer, so only disable it for trusted peers. Uses `hyper`'s default (1024) otherwise.
+    #[must_use]
+    pub fn http2_max_local_error_reset_streams(self, max: impl Into<Option<usize>>) -> Self {
+        Endpoint {
+            http2_max_local_error_reset_streams: Some(max.into()),
+            ..self
+        }
+    }
+
+    /// Sets the maximum number of streams the peer opened and then reset that may wait unaccepted
+    /// before the connection is closed with `GOAWAY(ENHANCE_YOUR_CALM)`.
+    ///
+    /// Passing `None` keeps the default in `h2`. As of v0.4.20, it is 20.
+    #[must_use]
+    pub fn http2_max_pending_accept_reset_streams(self, max: Option<usize>) -> Self {
+        Endpoint {
+            http2_max_pending_accept_reset_streams: max,
             ..self
         }
     }
