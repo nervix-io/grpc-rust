@@ -55,6 +55,42 @@ impl Connection {
             settings.max_header_list_size(val);
         }
 
+        if let Some(val) = endpoint.http2_header_table_size {
+            settings.header_table_size(val);
+        }
+
+        if let Some(val) = endpoint.max_frame_size {
+            settings.max_frame_size(val);
+        }
+
+        if let Some(val) = endpoint.http2_initial_max_send_streams {
+            settings.initial_max_send_streams(val);
+        }
+
+        if let Some(val) = endpoint.http2_max_concurrent_streams {
+            settings.max_concurrent_streams(val);
+        }
+
+        if let Some(val) = endpoint.http2_max_send_buf_size {
+            settings.max_send_buf_size(val);
+        }
+
+        if let Some(val) = endpoint.http2_max_concurrent_reset_streams {
+            settings.max_concurrent_reset_streams(val);
+        }
+
+        if let Some(val) = endpoint.http2_reset_stream_duration {
+            settings.reset_stream_duration(val);
+        }
+
+        if let Some(val) = endpoint.http2_max_local_error_reset_streams {
+            settings.max_local_error_reset_streams(val);
+        }
+
+        if let Some(val) = endpoint.http2_max_pending_accept_reset_streams {
+            settings.max_pending_accept_reset_streams(val);
+        }
+
         let stack = ServiceBuilder::new()
             .layer_fn(|s| {
                 let origin = endpoint.origin.as_ref().unwrap_or(endpoint.uri()).clone();
